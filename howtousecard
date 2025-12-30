@@ -1,0 +1,111 @@
+ADVANCED COMMODORE EDITOR (C64 ULTIMATE) — QUICK REFERENCE CARD
+Version 2.2
+by Dr. Eric O. Flores (c) 2025
+
+====================================
+STARTING THE EDITOR
+====================================
+LOAD "ADVEDITC64U.PRG",8,1
+RUN
+
+(Replace 8 with your USB device number if needed)
+
+====================================
+SCREEN LAYOUT
+====================================
+Top Line    : Menu Bar (File / Edit / Help)
+Middle Area : Text Editing View
+Bottom Line : Status, prompts, messages
+
+====================================
+MENU KEYS
+====================================
+F1  → File Menu
+F3  → Edit Menu
+F5  → Help Menu
+
+ESC / RUN-STOP → Cancel menu
+
+====================================
+FILE MENU (F1)
+====================================
+O  Open file
+S  Save
+A  Save As
+C  Close (new empty buffer)
+Q  Quit editor
+
+====================================
+EDIT MENU (F3)
+====================================
+Y  Copy current line
+X  Cut current line
+P  Paste line
+F  Search
+R  Search & Replace
+
+====================================
+HELP MENU (F5)
+====================================
+A  About screen
+
+====================================
+EDITING KEYS
+====================================
+Cursor Keys  : Move cursor
+RETURN       : New line
+DEL          : Backspace
+
+====================================
+TYPING MODE (IMPORTANT)
+====================================
+CTRL + U  → Toggle typing mode
+
+UPPER  : Forces uppercase letters (default)
+mixed  : Mixed-case typing (keyboard dependent)
+
+(Current mode is shown on status line)
+
+====================================
+SEARCH
+====================================
+F3 → F
+Enter text → Jump to next match
+
+====================================
+SEARCH & REPLACE
+====================================
+F3 → R
+Enter text to find
+Enter replacement text
+One replacement is performed
+
+====================================
+FILE STORAGE
+====================================
+Files are opened/saved using IEC device numbers.
+
+Common devices:
+8   Default (often Ultimate USB)
+9+  Alternate Ultimate mappings
+
+List directory from BASIC:
+LOAD "$",8
+LIST
+
+====================================
+EMERGENCY EXIT
+====================================
+RUN-STOP + RESTORE
+
+====================================
+LICENSE
+====================================
+MIT License (summary)
+Provided “as is”, no warranty.
+
+====================================
+OPTIONAL SUPPORT
+====================================
+PayPal: @floreseo
+(Education comes first)
