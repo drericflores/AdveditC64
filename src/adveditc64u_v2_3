@@ -1,0 +1,280 @@
+/*
+ * Advanced Commodore Editor (C64 Ultimate) — Version 2.3
+ *
+ * Fixes:
+ *  - Word-aware wrap (wrap whole words, not characters)
+ *  - True lowercase support via VIC-II charset switching
+ *
+ * Author: Dr. Eric O. Flores (c) 2025
+ * Toolchain: cc65 / cl65
+ */
+
+#include <c64.h>
+#include <conio.h>
+#include <cbm.h>
+#include <string.h>
+#include <ctype.h>
+
+/* ============================
+   Screen + editor parameters
+============================ */
+#define SCREEN_W 40
+#define SCREEN_H 25
+
+#define VIEW_Y   1
+#define VIEW_H   23
+#define STATUS_Y 24
+
+#define MAX_LINES 250
+#define MAX_COLS  80
+#define WRAP_COL  40
+
+#define DEFAULT_DEVICE 8
+#define LFN_DATA 2
+
+/* ============================
+   Editor state
+============================ */
+static char lines[MAX_LINES][MAX_COLS + 1];
+static unsigned int line_count = 1;
+
+static unsigned int cur_line = 0;
+static unsigned int cur_col  = 0;
+static unsigned int view_top = 0;
+
+static char filename[32];
+static unsigned char has_name = 0;
+static unsigned int device = DEFAULT_DEVICE;
+
+/* typing / charset mode */
+static unsigned char force_upper = 1;
+
+/* ============================
+   VIC-II charset control
+============================ */
+static void enable_uppercase(void) {
+    *(unsigned char*)0xD018 = 0x14;   /* Uppercase / graphics */
+}
+
+static void enable_lowercase(void) {
+    *(unsigned char*)0xD018 = 0x16;   /* Upper/lowercase */
+}
+
+/* ============================
+   Utility helpers
+============================ */
+static unsigned int slen(const char* s) {
+    unsigned int n = 0;
+    while (*s++) n++;
+    return n;
+}
+
+static void ensure_visible(void) {
+    if (cur_line < view_top)
+        view_top = cur_line;
+    if (cur_line >= view_top + VIEW_H)
+        view_top = cur_line - VIEW_H + 1;
+}
+
+/* ============================
+   Screen drawing
+============================ */
+static void draw_menu(void) {
+    revers(1);
+    gotoxy(0,0);
+    cclear(SCREEN_W);
+    gotoxy(0,0);
+    cputs(" File  Edit  Help   (F1) (F3) (F5) ");
+    revers(0);
+}
+
+static void draw_status(void) {
+    char buf[40];
+
+    gotoxy(0, STATUS_Y);
+    cclear(SCREEN_W);
+
+    strcpy(buf, "DEV ");
+    buf[4] = '0' + (device / 10);
+    buf[5] = '0' + (device % 10);
+    buf[6] = ' ';
+    buf[7] = 0;
+
+    if (has_name)
+        strcat(buf, filename);
+    else
+        strcat(buf, "Untitled");
+
+    strcat(buf, force_upper ? "  UPPER " : "  mixed ");
+    strcat(buf, "Ln ");
+
+    {
+        unsigned int v = cur_line + 1;
+        buf[strlen(buf)+1] = 0;
+        buf[strlen(buf)] = '0' + (v % 10);
+    }
+
+    strcat(buf, " Col ");
+    {
+        unsigned int v = cur_col + 1;
+        buf[strlen(buf)+1] = 0;
+        buf[strlen(buf)] = '0' + (v % 10);
+    }
+
+    gotoxy(0, STATUS_Y);
+    cputs(buf);
+}
+
+static void draw_view(void) {
+    unsigned int r;
+
+    for (r = 0; r < VIEW_H; r++) {
+        unsigned int idx = view_top + r;
+        gotoxy(0, VIEW_Y + r);
+        cclear(SCREEN_W);
+        gotoxy(0, VIEW_Y + r);
+
+        if (idx < line_count) {
+            char temp[41];
+            unsigned int i;
+            for (i = 0; i < SCREEN_W; i++) {
+                char c = lines[idx][i];
+                if (!c) break;
+                temp[i] = c;
+            }
+            temp[i] = 0;
+            cputs(temp);
+        }
+    }
+}
+
+static void place_cursor(void) {
+    ensure_visible();
+    gotoxy(cur_col < 39 ? cur_col : 39,
+           VIEW_Y + (cur_line - view_top));
+}
+
+/* ============================
+   Line operations
+============================ */
+static void split_line(void) {
+    unsigned int i;
+
+    if (line_count >= MAX_LINES) return;
+
+    for (i = line_count; i > cur_line + 1; i--)
+        strcpy(lines[i], lines[i-1]);
+
+    strcpy(lines[cur_line + 1], lines[cur_line] + cur_col);
+    lines[cur_line][cur_col] = 0;
+
+    line_count++;
+    cur_line++;
+    cur_col = 0;
+}
+
+/* 🔥 Word-aware wrap */
+static void wrap_if_needed(void) {
+    int i;
+
+    if (cur_col < WRAP_COL) return;
+
+    /* scan backward for space */
+    for (i = WRAP_COL - 1; i >= 0; i--) {
+        if (lines[cur_line][i] == ' ') {
+            cur_col = i + 1;
+            split_line();
+            return;
+        }
+    }
+
+    /* fallback: hard wrap */
+    cur_col = WRAP_COL;
+    split_line();
+}
+
+static void insert_char(char c) {
+    unsigned int len = slen(lines[cur_line]);
+    unsigned int i;
+
+    if (len >= MAX_COLS) return;
+
+    for (i = len + 1; i > cur_col; i--)
+        lines[cur_line][i] = lines[cur_line][i-1];
+
+    lines[cur_line][cur_col++] = c;
+    wrap_if_needed();
+}
+
+static void backspace(void) {
+    unsigned int len = slen(lines[cur_line]);
+    unsigned int i;
+
+    if (cur_col > 0) {
+        for (i = cur_col - 1; i < len; i++)
+            lines[cur_line][i] = lines[cur_line][i+1];
+        cur_col--;
+    }
+}
+
+/* ============================
+   Key handling
+============================ */
+#define KEY_F1 133
+#define KEY_F3 134
+#define KEY_F5 135
+#define KEY_CTRL_U 21
+
+static void handle_key(unsigned char k) {
+    if (k == KEY_CTRL_U) {
+        force_upper = !force_upper;
+        if (force_upper)
+            enable_uppercase();
+        else
+            enable_lowercase();
+        return;
+    }
+
+    if (k == 13) { split_line(); return; }
+    if (k == 20) { backspace(); return; }
+
+    if (k == 145 && cur_line > 0) cur_line--;
+    if (k == 17  && cur_line + 1 < line_count) cur_line++;
+    if (k == 157 && cur_col > 0) cur_col--;
+    if (k == 29  && cur_col < slen(lines[cur_line])) cur_col++;
+
+    if (k >= 32 && k <= 126) {
+        char c = (char)k;
+        if (force_upper && isalpha((unsigned char)c))
+            c = toupper(c);
+        insert_char(c);
+    }
+}
+
+/* ============================
+   Main
+============================ */
+int main(void) {
+    unsigned char k;
+
+    clrscr();
+    bordercolor(COLOR_BLUE);
+    bgcolor(COLOR_BLUE);
+    textcolor(COLOR_WHITE);
+
+    cursor(1);
+    enable_uppercase();
+
+    lines[0][0] = 0;
+    filename[0] = 0;
+
+    while (1) {
+        draw_menu();
+        draw_view();
+        draw_status();
+        place_cursor();
+
+        k = cgetc();
+        handle_key(k);
+    }
+}
